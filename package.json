@@ -4,6 +4,7 @@
   "description": "API to interact with Kentik Service",
   "scripts": {
     "build": "tsc",
+    "test": "jasmine --config=./tests/jasmine.json",
     "lint": "eslint --ext ts --fix src/",
     "lint:nofix": "eslint --ext ts src/"
   },
@@ -23,6 +24,7 @@
   },
   "homepage": "https://github.com/data-preservation-program/kentik-service",
   "devDependencies": {
+    "@types/jasmine": "^4.3.1",
     "@types/node": "^18.15.3",
     "@typescript-eslint/eslint-plugin": "^5.55.0",
     "@typescript-eslint/parser": "^5.55.0",
@@ -33,10 +35,28 @@
     "eslint-plugin-prefer-arrow": "^1.2.3",
     "eslint-plugin-promise": "^6.1.1",
     "eslint-plugin-standard": "^5.0.0",
+    "jasmine": "^4.6.0",
     "ts-node": "^10.9.1",
     "typescript": "^4.9.5"
   },
   "dependencies": {
+    "@chainsafe/libp2p-noise": "^11.0.1",
+    "@chainsafe/libp2p-yamux": "^3.0.7",
+    "@filecoin-shipyard/lotus-client-provider-nodejs": "^1.1.1",
+    "@filecoin-shipyard/lotus-client-rpc": "^1.2.0",
+    "@filecoin-shipyard/lotus-client-schema": "^4.2.0",
+    "@ipld/dag-cbor": "^9.0.0",
+    "@libp2p/mplex": "^7.1.2",
+    "@libp2p/peer-id": "^2.0.3",
+    "@libp2p/tcp": "^6.1.4",
+    "@libp2p/websockets": "^5.0.7",
+    "@multiformats/multiaddr": "^12.1.0",
+    "abortable-iterator": "^4.0.2",
+    "it-concat": "^3.0.1",
+    "it-pipe": "^2.0.5",
+    "libp2p": "^0.42.2",
+    "pino": "^8.11.0",
+    "uint8arrays": "^4.0.3"
   },
   "author": "Xinan Xu",
   "files": [
