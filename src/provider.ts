@@ -11,6 +11,8 @@ import { PeerId } from '@libp2p/interface-peer-id';
 import { abortableSource } from 'abortable-iterator';
 import { decode } from '@ipld/dag-cbor';
 import itconcat from 'it-concat';
+// @ts-ignore
+import { IdentifyService, IdentifyServiceComponents } from 'libp2p/dist/src/identify/index.js';
 
 export interface ProviderInfo {
   providerId: string;
@@ -48,7 +50,17 @@ export class ProviderUtil {
     return result;
   }
 
-  public static async GetProtocols (node: Libp2p, peerId: PeerId, multiAddrs: Multiaddr[]) : Promise<ProviderProtocol[]> {
+  public static async GetProtocols (node: Libp2p, peerId: PeerId, multiAddrs: Multiaddr[]) : Promise<string[]> {
+    await node.peerStore.addressBook.set(peerId, multiAddrs);
+    logger.info({ peerId: peerId.toString() }, 'Dialing peer');
+    await node.dial(peerId, { signal: AbortSignal.timeout(5000) });
+    const connections = node.getConnections(peerId);
+    const identifyService : IdentifyService = node.identifyService as unknown as IdentifyService;
+    const identify = await identifyService._identify(connections[0]);
+    return identify.protocols;
+  }
+
+  public static async GetTransportProtocols (node: Libp2p, peerId: PeerId, multiAddrs: Multiaddr[]) : Promise<ProviderProtocol[]> {
     await node.peerStore.addressBook.set(peerId, multiAddrs);
     logger.info({ peerId: peerId.toString() }, 'Dialing peer');
     const stream = await node.dialProtocol(peerId, '/fil/retrieval/transports/1.0.0',
