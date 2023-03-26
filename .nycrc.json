@@ -1,0 +1,14 @@
+{
+  "check-coverage": false,
+  "include": [
+    "**"
+  ],
+  "reporter": [
+    "text",
+    "html"
+  ],
+  "lines": 90,
+  "functions": 50,
+  "statements": 90,
+  "per-file": true
+}
