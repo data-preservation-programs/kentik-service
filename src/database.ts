@@ -1,7 +1,7 @@
-import { CreationOptional, DataTypes, Model, Sequelize } from 'sequelize';
+import { DataTypes, Model, Sequelize } from 'sequelize';
 import logger from './logger.js';
 
-export type LastTestResult = {agentId: string, longitude: number, latitude: number, latencyMs: number};
+export type LastTestResults = {[key: string]: number};
 
 export class Endpoint extends Model {
   // @ts-ignore
@@ -13,13 +13,17 @@ export class Endpoint extends Model {
   // @ts-ignore
   public protocol: 'libp2p' | 'http' | 'bitswap' | 'markets';
   // @ts-ignore
-  public testId: string | null;
+  public globalTestId: string;
   // @ts-ignore
-  public testState: 'running' | 'paused' | 'removed';
+  public globalTestStatus: 'running' | 'paused';
   // @ts-ignore
-  public lastResults: LastTestResult[];
-  declare public createdAt: CreationOptional<Date>;
-  declare public updatedAt: CreationOptional<Date>;
+  public globalTestPausedAt: Date | null;
+  // @ts-ignore
+  public localTestId: string;
+  // @ts-ignore
+  public localTestStatus: 'running' | 'paused';
+  // @ts-ignore
+  public localTestLastChecked: Date | null;
 }
 
 export default class Database {
@@ -46,25 +50,29 @@ export default class Database {
         type: DataTypes.ENUM('libp2p', 'http', 'bitswap', 'markets'),
         allowNull: false
       },
-      testId: {
+      globalTestId: {
         type: DataTypes.STRING,
-        allowNull: true
+        allowNull: false
       },
-      testState: {
+      globalTestStatus: {
         type: DataTypes.ENUM('running', 'paused'),
         allowNull: false
       },
-      lastResults: {
-        type: DataTypes.JSONB,
+      localTestId: {
+        type: DataTypes.STRING,
+        allowNull: false
+      },
+      localTestStatus: {
+        type: DataTypes.ENUM('running', 'paused'),
         allowNull: false
       }
     }, {
       sequelize: Database.sequelize,
-      timestamps: true,
+      timestamps: false,
       indexes: [
         {
           unique: true,
-          fields: ['provider', 'multiaddr', 'protocol']
+          fields: ['provider', 'peerId', 'multiaddr', 'protocol']
         }
       ]
     });

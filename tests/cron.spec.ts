@@ -64,7 +64,7 @@ describe('CronUtil', () => {
     })
   })
 
-  fdescribe('scanNewProviders', () => {
+  describe('scanNewProviders', () => {
     const providers = [{
       providerId: 'f0test',
       peerId: peerIdFromString('QmYyQSo1c1Ym7orWxLYvCrM2EmxFTANf8wXmmE7DWjhx5N'),

@@ -5,13 +5,13 @@ import ipaddr from 'ipaddr.js';
 import rootLogger from './logger.js';
 import isValidDomain from 'is-valid-domain';
 import { AxiosError } from 'axios';
-import { Multiaddr, multiaddr } from '@multiformats/multiaddr';
+import { multiaddr, Multiaddr } from '@multiformats/multiaddr';
 import { PeerId } from '@libp2p/interface-peer-id';
-import { peerIdFromString } from '@libp2p/peer-id';
 import { createLibp2p, Libp2p } from 'libp2p';
 import { tcp } from '@libp2p/tcp';
 import { yamux } from '@chainsafe/libp2p-yamux';
 import { noise } from '@chainsafe/libp2p-noise';
+import { peerIdFromString } from '@libp2p/peer-id';
 
 type MultiaddrType = 'ip4' | 'ip6' | 'dns';
 
@@ -128,30 +128,34 @@ export default class Cron {
    * @param port the port part of the multiaddr
    * @param protocol the protocol for testing
    */
-  public async createNewTest (provider: string, type: MultiaddrType, addr: string, port: number, protocol: 'markets'): Promise<V202202Test> {
+  public async createNewTest (provider: string, type: MultiaddrType, addr: string, port: number, protocol: 'markets', isGlobal: boolean, startPaused: boolean): Promise<V202202Test> {
+    const defaultAgentId = '606'; // AWS us-west-2
+    const prefix = isGlobal ? 'global' : 'local';
     const testType = type === 'dns' ? 'hostname' : 'ip';
     const hostname = type === 'dns' ? { target: addr } : undefined;
     const ip = type === 'dns' ? undefined : { targets: [addr] };
-    let agentIds : string[];
+    let agentIds : string[] = [defaultAgentId];
     let family: V202202IPFamily = V202202IPFamily.IP_FAMILY_DUAL;
-    switch (type) {
-      case 'ip4':
-        agentIds = this.kentikIp4Agents.map(agent => agent.id!);
-        family = V202202IPFamily.IPFAMILYV4;
-        break;
-      case 'ip6':
-        agentIds = this.kentikIp6Agents.map(agent => agent.id!);
-        family = V202202IPFamily.IPFAMILYV6;
-        break;
-      default:
-        agentIds = this.kentikAgents.map(agent => agent.id!);
-        break;
+    if (isGlobal) {
+      switch (type) {
+        case 'ip4':
+          agentIds = this.kentikIp4Agents.map(agent => agent.id!);
+          family = V202202IPFamily.IPFAMILYV4;
+          break;
+        case 'ip6':
+          agentIds = this.kentikIp6Agents.map(agent => agent.id!);
+          family = V202202IPFamily.IPFAMILYV6;
+          break;
+        default:
+          agentIds = this.kentikAgents.map(agent => agent.id!);
+          break;
+      }
     }
     const response = await this.kentik.synthetics.createTest({
       test: {
-        name: `${provider}-${type}-${addr}-${port}-${protocol}`,
+        name: `${prefix}-${provider}-${protocol}-${addr}`,
         type: testType,
-        status: V202202TestStatus.TEST_STATUS_ACTIVE,
+        status: startPaused ? V202202TestStatus.TEST_STATUS_PAUSED : V202202TestStatus.TEST_STATUS_ACTIVE,
         settings: {
           hostname,
           ip,
@@ -232,6 +236,9 @@ export default class Cron {
 
   /**
    * Scan all providers and create new tests for new endpoints
+   * For each endpoint,
+   * - if it already exists in the database , skip processing because it is already being tested
+   * - if it does not exist in the database, create new endpoint and new global test and local test(start with paused)
    */
   public async ScanNewProviders (providers: ProviderInfo[]) : Promise<EndpointKey[]> {
     const endPointKeys : EndpointKey[] = [];
@@ -253,6 +260,8 @@ export default class Cron {
 
         endPointKeys.push({ provider: provider.providerId, peerId: provider.peerId.toString(), multiaddr: addr.toString(), protocol: 'markets' });
         const transaction = await Database.sequelize.transaction();
+        let newGlobalTest;
+        let newLocalTest;
         try {
           const existing = await Endpoint.findOne({
             where: {
@@ -263,7 +272,7 @@ export default class Cron {
             },
             transaction
           });
-          if (existing && existing.testState !== 'removed') {
+          if (existing) {
             await transaction.commit();
             logger.debug(`Skipping because it is already in the database.`);
             continue;
@@ -275,30 +284,42 @@ export default class Cron {
             continue;
           }
 
-          const newTest = await this.createNewTest(provider.providerId, type, tuples[0][1]!, Number(tuples[1][1]), 'markets');
-          if (existing) {
-            // If the endpoint is in the database but marked as removed, we need to update the test
-            await existing.update({
-              testId: newTest.id,
-              testState: 'running',
-              lastResults: []
-            }, { transaction });
-          } else {
-            // Otherwise, we can create a new endpoint in the database
-            await Endpoint.create({
-              provider: provider.providerId,
-              peerId: provider.peerId.toString(),
-              multiaddr: addr.toString(),
-              protocol: 'markets',
-              testId: newTest.id,
-              testState: 'running',
-              lastResults: []
-            }, { transaction });
-          }
+          newGlobalTest = await this.createNewTest(
+            provider.providerId,
+            type,
+            tuples[0][1]!,
+            Number(tuples[1][1]),
+            'markets',
+            true,
+            false);
+          newLocalTest = await this.createNewTest(
+            provider.providerId,
+            type,
+            tuples[0][1]!,
+            Number(tuples[1][1]),
+            'markets',
+            false,
+            true);
+          await Endpoint.create({
+            provider: provider.providerId,
+            peerId: provider.peerId.toString(),
+            multiaddr: addr.toString(),
+            protocol: 'markets',
+            globalTestId: newGlobalTest.id,
+            localTestId: newLocalTest.id,
+            globalTestStatus: 'running',
+            localTestStatus: 'paused'
+          }, { transaction });
           await transaction.commit();
         } catch (e) {
           await transaction.rollback();
           logger.error(e, 'Error while scanning. Transaction has been rolled back.');
+          if (newGlobalTest) {
+            await this.resumeTest(newGlobalTest.id!);
+          }
+          if (newLocalTest) {
+            await this.resumeTest(newLocalTest.id!);
+          }
         }
       }
     }
@@ -319,125 +340,150 @@ export default class Cron {
     return true;
   }
 
+  public static getBestAgent (testResults: V202202TestResults[]) : [string, number] | undefined {
+    const agentMap = new Map<string, number>();
+    for (const testResult of testResults) {
+      for (const agent of testResult.agents!) {
+        for (const task of agent.tasks!) {
+          const latency = task.ping!.latency!;
+          if (latency.health === 'healthy') {
+            if (!agentMap.has(agent.agentId!) || agentMap.get(agent.agentId!)! > latency.current!) {
+              agentMap.set(agent.agentId!, latency.current!);
+            }
+          }
+        }
+      }
+    }
+    return Array.from(agentMap.entries()).sort((a, b) => a[1] - b[1])[0];
+  }
+
+  public async updateGlobalTest (endpoint: Endpoint) : Promise<void> {
+    const logger = rootLogger.child(endpoint);
+
+    /**
+     * global == running
+     * - check the latest global result
+     * - if the latest result is empty, do nothing because the global test is not finished yet
+     * - if the latest result show all unhealthy status, then pause the test and change the state to paused
+     * - otherwise, update the database with the latest global result and update local test with the best agent, resume if paused
+     *
+     * global == paused
+     * - if no global result is within last 7 days, check libp2p connection, if up, then resume global test
+     */
+    if (endpoint.globalTestStatus === 'running') {
+      const globalTest = await this.getTest(endpoint.globalTestId!);
+      if (globalTest.status === V202202TestStatus.TEST_STATUS_PAUSED && endpoint.globalTestStatus === 'running') {
+        logger.error('The global test is paused but the endpoint says its running. Mark it as paused.');
+        await endpoint.update({ globalTestStatus: 'paused', globalTestStatusUpdatedAt: new Date() });
+        return;
+      }
+      const globalResult = await this.getTestResult(endpoint.globalTestId!, 2 * 60 * 60);
+      if (globalResult.length === 0) {
+        logger.info('The global test is not finished yet.');
+        return;
+      }
+      const bestAgent = Cron.getBestAgent(globalResult);
+      if (bestAgent === undefined) {
+        logger.warn('The global test is finished but all the agents are unhealthy. Pausing the test.');
+        await this.pauseTest(endpoint.globalTestId!);
+        await endpoint.update({ globalTestStatus: 'paused', globalTestStatusUpdatedAt: new Date() });
+        return;
+      }
+      logger.info(`The best agent is ${bestAgent[0]} with latency ${bestAgent[1]} ms.`);
+      logger.info('Pausing the global test.');
+      await this.pauseTest(endpoint.globalTestId!);
+      logger.info('Updating the local test.');
+      const localTest = await this.getTest(endpoint.localTestId!);
+      localTest.settings!.agentIds! = [bestAgent[0]];
+      await this.updateTest(localTest.id!, localTest);
+      logger.info('Resuming the local test.');
+      if (endpoint.localTestStatus === 'paused') {
+        await this.resumeTest(endpoint.localTestId!);
+        await endpoint.update({ localTestStatus: 'running' });
+      }
+    }
+
+    if (Date.now() - endpoint.globalTestPausedAt!.getTime() < 7 * 24 * 60 * 60 * 1000) {
+      logger.info('The global test is paused for less than 7 days. Skipping.');
+    }
+    const globalTest = await this.getTest(endpoint.globalTestId!);
+    if (globalTest.status === V202202TestStatus.TEST_STATUS_ACTIVE && endpoint.globalTestStatus === 'paused') {
+      logger.error('The global test is running but the endpoint says its paused. Pausing the test.');
+      await this.pauseTest(endpoint.globalTestId!);
+      await endpoint.update({ globalTestStatus: 'paused', globalTestStatusUpdatedAt: new Date() });
+      return;
+    }
+
+    const globalResult = await this.getTestResult(endpoint.globalTestId!, 7 * 24 * 60 * 60);
+    if (globalResult.length === 0) {
+      const isLibp2pReachable = await this.checkLibp2pConnection(peerIdFromString(endpoint.peerId), multiaddr(endpoint.multiaddr));
+      if (!isLibp2pReachable) {
+        logger.warn('The libp2p connection is not reachable. Not resuming the global test.');
+        return;
+      }
+
+      logger.info('The global test is paused for more than 7 days. Libp2p check is okay. Resuming the global test.');
+      await this.resumeTest(endpoint.globalTestId!);
+      await endpoint.update({ globalTestStatus: 'running' });
+    }
+  }
+
+  public async updateLocalTest (endpoint: Endpoint) : Promise<void> {
+    const logger = rootLogger.child(endpoint);
+    if (endpoint.localTestLastChecked != null && Date.now() - endpoint.localTestLastChecked.getTime() < 7 * 24 * 60 * 60 * 1000) {
+      logger.info('The local test is checked for less than 7 days. Skipping.');
+      return;
+    }
+    await endpoint.update({ localTestLastChecked: new Date() });
+    const localTest = await this.getTest(endpoint.localTestId!);
+    if (localTest.status === V202202TestStatus.TEST_STATUS_ACTIVE && endpoint.localTestStatus === 'paused') {
+      logger.error('The local test is active but the endpoint is paused. Mark it as running.');
+      await endpoint.update({ localTestStatus: 'running' });
+      return;
+    }
+    if (localTest.status === V202202TestStatus.TEST_STATUS_PAUSED && endpoint.localTestStatus === 'running') {
+      logger.error('The local test is paused but the endpoint is running. Resuming the test.');
+      await this.resumeTest(endpoint.localTestId!);
+      return;
+    }
+    /** State transition
+     * local == running
+     * - if the local test result fails for more than 7 days, change the status to paused
+     *
+     * local == paused
+     * - do nothing because the global test will ultimately enable the local test
+     */
+    if (endpoint.localTestStatus === 'running') {
+      const localResult = await this.getTestResult(endpoint.localTestId!, 7 * 24 * 60 * 60);
+      const bestAgent = Cron.getBestAgent(localResult);
+      if (bestAgent === undefined) {
+        logger.warn('The local test has failed for the last 7 days. Pausing the test.');
+        await this.pauseTest(endpoint.localTestId!);
+        await endpoint.update({ localTestStatus: 'paused' });
+      }
+    }
+  }
+
   public async UpdateAllTests (currentEndpoints: EndpointKey[]) : Promise<void> {
     rootLogger.info('Updating all tests in the database.');
     const endpoints = await Endpoint.findAll();
     for (const endpoint of endpoints) {
       const logger = rootLogger.child(endpoint);
       // If the endpoint is no longer in the currentEndpoints, we should remove the test and update in the database
-      if (endpoint.testState !== 'removed' && currentEndpoints.find(e =>
+      if (currentEndpoints.find(e =>
         e.provider === endpoint.provider &&
         e.peerId === endpoint.peerId &&
         e.multiaddr === endpoint.multiaddr &&
         e.protocol === endpoint.protocol) === undefined) {
         logger.info('Removing test because the endpoint is no longer published on the chain.');
-        await this.removeTest(endpoint.testId!);
-        await endpoint.update({ testId: null, testState: 'removed' });
+        await this.removeTest(endpoint.globalTestId!);
+        await this.removeTest(endpoint.localTestId!);
+        await endpoint.destroy();
+        continue;
       }
 
-      /** State transition
-       * removed:
-       * - do nothing
-       * paused: This means the test has been failed for a long time
-       * - if the test has been paused for at least 24 hours, check tcp connection in nodejs.
-       *   If it's up, resume the test and change the state to running with previous configuration
-       * running: We need to optimize the test agent count to get to the minimum latency
-       * - with global agents
-       *  - if the service is down, pause the test, remove latency, agents, and location
-       *  - otherwise, find the lowest 3 latency agents and change to use them, save the latency, number of agents and location
-       * - with 2 latency agents:
-       *  - if the latency is within 10ms of the lowest latency, do nothing
-       *  - if the latency is 10ms higher than the lowest latency for at least 24 hours, change to use global agents
-       *  - if the service is down for at least 7 days, pause the test, remove latency, agents, and location
-       *
-       */
-      if (endpoint.testState === 'paused') {
-        if (endpoint.updatedAt.getTime() - Date.now() > 24 * 60 * 60 * 1000) {
-          logger.info(`The endpoint test is paused for more than 24 hours. Checking if ${endpoint.multiaddr} is reachable via libp2p.`);
-          const libp2pReachable = await this.checkLibp2pConnection(peerIdFromString(endpoint.peerId), multiaddr(endpoint.multiaddr));
-          if (!libp2pReachable) {
-            logger.info(`Skipping ${endpoint.multiaddr} because it is not reachable via libp2p.`);
-            continue;
-          }
-          logger.info('The endpoint is now reachable via libp2p. Resuming the test.');
-          await this.resumeTest(endpoint.testId!);
-          await endpoint.update({ testState: 'running' });
-        }
-      } else if (endpoint.testState === 'running') {
-        const test = await this.getTest(endpoint.testId!);
-        if (test.settings!.agentIds!.length! > 2) {
-          const testResult = await this.getTestResult(endpoint.testId!, 2 * 60 * 60);
-          if (testResult.length === 0) {
-            logger.info('The test is active but there is no result yet. Skipping.');
-            continue;
-          }
-          // This is a global test. If the service is down, we should pause the test
-          if (testResult.every(r => r.health !== 'healthy')) {
-            logger.info('The test is active with global agents but none of them are reporting healthy status. Pausing the test.');
-            await this.pauseTest(endpoint.testId!);
-            await endpoint.update({ testState: 'paused' });
-            continue;
-          }
-          // Otherwise, we should find the lowest 2 latency agents and change to use them
-          const lastResult = testResult.reduce((a, b) => a.time! > b.time! ? a : b);
-          const closestAgents = lastResult.agents!.sort(
-            (a, b) => a.tasks![0].ping!.latency!.rollingAvg! - b.tasks![0].ping!.latency!.rollingAvg!)
-            .slice(0, 2).map(a => a.agentId!);
-          logger.info({ closestAgents }, 'The test is active with global agents. Changing to use the closest 3 agents.');
-          test.settings!.agentIds = closestAgents;
-          await this.updateTest(test.id!, test);
-          const latencies = lastResult.agents!.map(a => a.tasks![0].ping!.latency!.rollingAvg!);
-          await endpoint.update({
-            testAgentCount: closestAgents.length,
-            lastLatency: Math.min(...latencies)
-          });
-          continue;
-        }
-        // This is a test with 2 latency agents. If the latency is within 10ms of the lowest latency, do nothing
-        const testResult = await this.getTestResult(endpoint.testId!, 7 * 24 * 60 * 60);
-        if (testResult.length === 0) {
-          logger.info('The test is active but there is no result yet. Skipping.');
-          continue;
-        }
-        const latencies = testResult.map(r => r.agents!.filter(a => a.health === 'healthy').map(a => a.tasks![0].ping!.latency!.rollingAvg!)).flat().flat();
-        if (latencies.length === 0) {
-          logger.info('The test is active with 2 latency agents but none of them are reporting healthy status for the last 7 days. Pausing the test.');
-          await this.pauseTest(endpoint.testId!);
-          await endpoint.update({
-            testState: 'paused',
-            lastLatency: null
-          });
-          continue;
-        }
-        const lowestLatency = Math.min(...latencies);
-        /**
-        if (endpoint.lastLatency == null || endpoint.lastLatency - lowestLatency <= 10) {
-          logger.info('The test is active with 3 latency agents and the latency is within 10ms of the lowest latency. Skipping.');
-          if (endpoint.lastLatency != null && endpoint.lastLatency > lowestLatency) {
-            await endpoint.update({ lastLatency: lowestLatency });
-          }
-          continue;
-        }
-         **/
-        logger.info('The test is active with 3 latency agents but the latency is more than 10ms higher than the lowest latency. Changing to use global agents.');
-        const tuples = multiaddr(endpoint.multiaddr).stringTuples();
-        const type : MultiaddrType | undefined = Cron.multiaddrTypeMap[tuples[0][0]];
-        switch (type) {
-          case 'ip4':
-            test.settings!.agentIds = this.kentikIp4Agents.map(a => a.id!);
-            break;
-          case 'ip6':
-            test.settings!.agentIds = this.kentikIp6Agents.map(a => a.id!);
-            break;
-          default:
-              test.settings!.agentIds = this.kentikAgents.map(a => a.id!);
-        }
-        await this.updateTest(test.id!, test);
-        await endpoint.update({
-          testAgentCount: test.settings!.agentIds!.length!,
-          lastLatency: lowestLatency
-        });
-      }
+      await this.updateGlobalTest(endpoint);
+      await this.updateLocalTest(endpoint);
     }
   }
 }
