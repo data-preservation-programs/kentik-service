@@ -5,6 +5,7 @@
   "scripts": {
     "build": "tsc",
     "test": "jasmine --config=./tests/jasmine.json",
+    "start": "node dist/src/cmd/pull-providers.js",
     "coverage": "c8 jasmine --config=./tests/jasmine.json",
     "lint": "eslint --ext ts --fix src/",
     "lint:nofix": "eslint --ext ts src/"

@@ -23,11 +23,26 @@ export class Endpoint extends Model {
   // @ts-ignore
   public localTestStatus: 'running' | 'paused';
   // @ts-ignore
-  public localTestLastChecked: Date | null;
+  public localTestLastCheckedAt: Date | null;
+
+  public toSimple () {
+    return {
+      provider: this.provider,
+      peerId: this.peerId,
+      multiaddr: this.multiaddr,
+      protocol: this.protocol,
+      globalTestId: this.globalTestId,
+      localTestId: this.localTestId
+    };
+  }
 }
 
 export default class Database {
   public static sequelize: Sequelize;
+  public static async close () : Promise<void> {
+    await Database.sequelize.close();
+  }
+
   public static async init (): Promise<void> {
     Database.sequelize = new Sequelize(process.env.SEQUELIZE_URI ?? 'sqlite::memory:', {
       logging: msg => logger.debug(msg)
@@ -58,6 +73,10 @@ export default class Database {
         type: DataTypes.ENUM('running', 'paused'),
         allowNull: false
       },
+      globalTestPausedAt: {
+        type: DataTypes.DATE,
+        allowNull: true
+      },
       localTestId: {
         type: DataTypes.STRING,
         allowNull: false
@@ -65,6 +84,10 @@ export default class Database {
       localTestStatus: {
         type: DataTypes.ENUM('running', 'paused'),
         allowNull: false
+      },
+      localTestLastCheckedAt: {
+        type: DataTypes.DATE,
+        allowNull: true
       }
     }, {
       sequelize: Database.sequelize,
@@ -76,6 +99,7 @@ export default class Database {
         }
       ]
     });
-    await Endpoint.sync({ alter: true });
+    await Endpoint.sync();
+    // await Endpoint.sync({ alter: true });
   }
 }

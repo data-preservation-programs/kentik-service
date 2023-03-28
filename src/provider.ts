@@ -98,8 +98,8 @@ export class ProviderUtil {
     const logger = rootLogger.child({ peerId: peerId.toString() });
     logger.debug('Dialing peer to Ping');
     try {
-      await node.dial(peerId, { signal: AbortSignal.timeout(5000) });
-      return await node.ping(peerId, { signal: AbortSignal.timeout(5000) });
+      await node.dial(peerId, { signal: AbortSignal.timeout(Number(process.env.LIBP2P_TIMEOUT) || 5000) });
+      return await node.ping(peerId, { signal: AbortSignal.timeout(Number(process.env.LIBP2P_TIMEOUT) || 5000) });
     } catch (e: any) {
       if (e.errors) {
         throw e.errors[0];
@@ -112,7 +112,7 @@ export class ProviderUtil {
     await node.peerStore.addressBook.set(peerId, multiAddrs);
     const logger = rootLogger.child({ peerId: peerId.toString() });
     logger.debug('Dialing peer to GetProtocols');
-    await node.dial(peerId, { signal: AbortSignal.timeout(5000) });
+    await node.dial(peerId, { signal: AbortSignal.timeout(Number(process.env.LIBP2P_TIMEOUT) || 5000) });
     const connections = node.getConnections(peerId);
     const identifyService : IdentifyService = node.identifyService as unknown as IdentifyService;
     const identify = await identifyService._identify(connections[0]);
@@ -125,7 +125,7 @@ export class ProviderUtil {
     logger.debug('Dialing peer to GetTransportProtocols');
     const stream = await node.dialProtocol(peerId, '/fil/retrieval/transports/1.0.0',
       { signal: AbortSignal.timeout(5000) });
-    const source = abortableSource(stream.source, AbortSignal.timeout(5000));
+    const source = abortableSource(stream.source, AbortSignal.timeout(Number(process.env.LIBP2P_TIMEOUT) || 5000));
     logger.debug('Reading stream');
     const content = (await itconcat(source)).subarray();
     const decoded: {Protocols: ProviderProtocolRaw[]} = decode(content);

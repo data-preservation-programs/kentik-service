@@ -1,4 +1,4 @@
-import { Api, V202202Agent, V202202IPFamily, V202202Test, V202202TestResults, V202202TestStatus } from './kentik/synthetics.js';
+import { Api, V202202IPFamily, V202202Test, V202202TestResults, V202202TestStatus } from './kentik/synthetics.js';
 import Database, { Endpoint } from './database.js';
 import { ProviderInfo, ProviderUtil } from './provider.js';
 import ipaddr from 'ipaddr.js';
@@ -13,7 +13,7 @@ import { yamux } from '@chainsafe/libp2p-yamux';
 import { noise } from '@chainsafe/libp2p-noise';
 import { peerIdFromString } from '@libp2p/peer-id';
 
-type MultiaddrType = 'ip4' | 'ip6' | 'dns';
+type MultiaddrType = 'ip4' | 'ip6' | 'dns' | 'dns6';
 
 interface EndpointKey {
   provider: string,
@@ -23,10 +23,176 @@ interface EndpointKey {
 }
 
 export default class Cron {
+  public globalCreditReached = false;
   private kentik: Api<any>;
-  private kentikAgents: V202202Agent[] = [];
-  private kentikIp4Agents: V202202Agent[] = [];
-  private kentikIp6Agents: V202202Agent[] = [];
+  private kentikV6Agents: string[] = [
+    '66539',
+    '608',
+    '849',
+    '2642',
+    '2122',
+    '2644',
+    '616',
+    '1125',
+    '654',
+    '568',
+    '1138',
+    '667',
+    '2666',
+    '3254',
+    '569',
+    '3291',
+    '39886',
+    '2648',
+    '39887',
+    '2652',
+    '670',
+    '663',
+    '576',
+    '609',
+    '611',
+    '40232',
+    '617',
+    '580',
+    '839',
+    '657',
+    '650',
+    '678',
+    '606',
+    '2653',
+    '15940',
+    '2655',
+    '2663',
+    '41860',
+    '2659',
+    '66790',
+    '613',
+    '1121',
+    '2660',
+    '596',
+    '600',
+    '672',
+    '629',
+    '627',
+    '34004',
+    '676',
+    '67874',
+    '659',
+    '671',
+    '66548',
+    '588',
+    '66353',
+    '598',
+    '584'
+  ];
+
+  private kentikAgents: string[] = [
+    '580',
+    '814',
+    '64234',
+    '2141',
+    '2655',
+    '831',
+    '42307',
+    '66790',
+    '2652',
+    '64264',
+    '66509',
+    '2666',
+    '613',
+    '817',
+    '67874',
+    '40232',
+    '593',
+    '34004',
+    '65242',
+    '65078',
+    '63129',
+    '849',
+    '15940',
+    '2653',
+    '3291',
+    '657',
+    '56117',
+    '819',
+    '728',
+    '815',
+    '568',
+    '2648',
+    '805',
+    '823',
+    '56119',
+    '821',
+    '735',
+    '606',
+    '820',
+    '611',
+    '7675',
+    '824',
+    '812',
+    '759',
+    '757',
+    '625',
+    '15945',
+    '640',
+    '826',
+    '810',
+    '588',
+    '56122',
+    '2642',
+    '734',
+    '829',
+    '809',
+    '2122',
+    '732',
+    '652',
+    '803',
+    '569',
+    '3367',
+    '675',
+    '572',
+    '806',
+    '41911',
+    '2025',
+    '41860',
+    '630',
+    '822',
+    '754',
+    '7671',
+    '736',
+    '676',
+    '616',
+    '816',
+    '42303',
+    '856',
+    '830',
+    '674',
+    '825',
+    '651',
+    '39887',
+    '2660',
+    '753',
+    '804',
+    '827',
+    '813',
+    '2023',
+    '808',
+    '41912',
+    '811',
+    '802',
+    '56116',
+    '828',
+    '576',
+    '2663',
+    '733',
+    '818',
+    '1549',
+    '801',
+    '737',
+    '656',
+    '839',
+    '627',
+    '41910'];
 
   private node: Libp2p | undefined;
 
@@ -60,12 +226,6 @@ export default class Cron {
   }
 
   public async init () : Promise<void> {
-    this.kentikAgents = (await this.kentik.synthetics.listAgents()).data.agents!;
-    rootLogger.info(`Retrieved ${this.kentikAgents.length} Kentik agents`);
-    this.kentikIp4Agents = this.kentikAgents.filter(agent => agent.metadata?.publicIpv4Addresses?.[0] !== undefined);
-    rootLogger.info(`Retrieved ${this.kentikIp4Agents.length} Kentik IPv4 agents`);
-    this.kentikIp6Agents = this.kentikAgents.filter(agent => agent.metadata?.publicIpv6Addresses?.[0] !== undefined);
-    rootLogger.info(`Retrieved ${this.kentikIp6Agents.length} Kentik IPv6 agents`);
     this.node = await createLibp2p({
       transports: [tcp()],
       streamMuxers: [yamux()],
@@ -79,7 +239,7 @@ export default class Cron {
     41: 'ip6',
     53: 'dns',
     54: 'dns',
-    55: 'dns',
+    55: 'dns6',
     56: 'dns'
   };
 
@@ -129,28 +289,13 @@ export default class Cron {
    * @param protocol the protocol for testing
    */
   public async createNewTest (provider: string, type: MultiaddrType, addr: string, port: number, protocol: 'markets', isGlobal: boolean, startPaused: boolean): Promise<V202202Test> {
-    const defaultAgentId = '606'; // AWS us-west-2
+    const defaultAgentId = '608';
     const prefix = isGlobal ? 'global' : 'local';
-    const testType = type === 'dns' ? 'hostname' : 'ip';
-    const hostname = type === 'dns' ? { target: addr } : undefined;
-    const ip = type === 'dns' ? undefined : { targets: [addr] };
-    let agentIds : string[] = [defaultAgentId];
-    let family: V202202IPFamily = V202202IPFamily.IP_FAMILY_DUAL;
-    if (isGlobal) {
-      switch (type) {
-        case 'ip4':
-          agentIds = this.kentikIp4Agents.map(agent => agent.id!);
-          family = V202202IPFamily.IPFAMILYV4;
-          break;
-        case 'ip6':
-          agentIds = this.kentikIp6Agents.map(agent => agent.id!);
-          family = V202202IPFamily.IPFAMILYV6;
-          break;
-        default:
-          agentIds = this.kentikAgents.map(agent => agent.id!);
-          break;
-      }
-    }
+    const testType = type.includes('dns') ? 'hostname' : 'ip';
+    const hostname = type.includes('dns') ? { target: addr } : undefined;
+    const ip = type.includes('dns') ? undefined : { targets: [addr] };
+    const agentIds : string[] = isGlobal ? (type.includes('6') ? this.kentikV6Agents : this.kentikAgents) : [defaultAgentId];
+    const family: V202202IPFamily = V202202IPFamily.IP_FAMILY_DUAL;
     const response = await this.kentik.synthetics.createTest({
       test: {
         name: `${prefix}-${provider}-${protocol}-${addr}`,
@@ -165,17 +310,17 @@ export default class Cron {
             count: 3,
             protocol: 'tcp',
             port,
-            timeout: 90000,
+            timeout: 22500,
             limit: 30,
-            delay: 60000,
+            delay: 0,
             dscp: 0
           },
           ping: {
             count: 4,
             protocol: 'tcp',
             port,
-            timeout: 10000,
-            delay: 60000,
+            timeout: 5000,
+            delay: 0,
             dscp: 0
           },
           period: 3600,
@@ -230,6 +375,7 @@ export default class Cron {
       case 'ip6':
         return ipaddr.isValid(host) && ipaddr.parse(host).range() === 'unicast';
       case 'dns':
+      case 'dns6':
         return isValidDomain(host);
     }
   }
@@ -240,7 +386,7 @@ export default class Cron {
    * - if it already exists in the database , skip processing because it is already being tested
    * - if it does not exist in the database, create new endpoint and new global test and local test(start with paused)
    */
-  public async ScanNewProviders (providers: ProviderInfo[]) : Promise<EndpointKey[]> {
+  public async ScanNewProviders (providers: ProviderInfo[], limit: number | undefined = undefined) : Promise<EndpointKey[]> {
     const endPointKeys : EndpointKey[] = [];
     for (const provider of providers) {
       for (const addr of provider.multiAddrs) {
@@ -259,6 +405,12 @@ export default class Cron {
         }
 
         endPointKeys.push({ provider: provider.providerId, peerId: provider.peerId.toString(), multiaddr: addr.toString(), protocol: 'markets' });
+        if (limit === 0) {
+          continue;
+        }
+        if (this.globalCreditReached) {
+          continue;
+        }
         const transaction = await Database.sequelize.transaction();
         let newGlobalTest;
         let newLocalTest;
@@ -279,11 +431,12 @@ export default class Cron {
           }
           const checkLibp2pConnection = await this.checkLibp2pConnection(provider.peerId, addr);
           if (!checkLibp2pConnection) {
-            logger.info(`Skipping because it is not reachable via libp2p.`);
+            logger.debug(`Skipping because it is not reachable via libp2p.`);
             await transaction.commit();
             continue;
           }
 
+          logger.info('Creating new test');
           newGlobalTest = await this.createNewTest(
             provider.providerId,
             type,
@@ -311,14 +464,31 @@ export default class Cron {
             localTestStatus: 'paused'
           }, { transaction });
           await transaction.commit();
+          if (limit !== undefined) {
+            limit -= 1;
+          }
         } catch (e) {
           await transaction.rollback();
           logger.error(e, 'Error while scanning. Transaction has been rolled back.');
           if (newGlobalTest) {
-            await this.resumeTest(newGlobalTest.id!);
+            try {
+              await this.removeTest(newGlobalTest.id!);
+            } catch (e) {
+              logger.error(e, 'Error while removing global test.');
+            }
           }
           if (newLocalTest) {
-            await this.resumeTest(newLocalTest.id!);
+            try {
+              await this.removeTest(newLocalTest.id!);
+            } catch (e) {
+              logger.error(e, 'Error while removing local test.');
+            }
+          }
+          if (e instanceof AxiosError) {
+            if (e.response?.data?.code === 8) {
+              logger.info('The global credit is reached. Skipping.');
+              this.globalCreditReached = true;
+            }
           }
         }
       }
@@ -330,7 +500,7 @@ export default class Cron {
     try {
       await ProviderUtil.Ping(this.node!, peer, [multiaddr]);
     } catch (e) {
-      rootLogger.warn({
+      rootLogger.debug({
         err: e,
         peer: peer.toString(),
         multiaddr: multiaddr.toString()
@@ -345,6 +515,9 @@ export default class Cron {
     for (const testResult of testResults) {
       for (const agent of testResult.agents!) {
         for (const task of agent.tasks!) {
+          if (task.ping == null) {
+            continue;
+          }
           const latency = task.ping!.latency!;
           if (latency.health === 'healthy') {
             if (!agentMap.has(agent.agentId!) || agentMap.get(agent.agentId!)! > latency.current!) {
@@ -358,7 +531,7 @@ export default class Cron {
   }
 
   public async updateGlobalTest (endpoint: Endpoint) : Promise<void> {
-    const logger = rootLogger.child(endpoint);
+    const logger = rootLogger.child(endpoint.toSimple());
 
     /**
      * global == running
@@ -374,10 +547,14 @@ export default class Cron {
       const globalTest = await this.getTest(endpoint.globalTestId!);
       if (globalTest.status === V202202TestStatus.TEST_STATUS_PAUSED && endpoint.globalTestStatus === 'running') {
         logger.error('The global test is paused but the endpoint says its running. Mark it as paused.');
-        await endpoint.update({ globalTestStatus: 'paused', globalTestStatusUpdatedAt: new Date() });
+        await endpoint.update({ globalTestStatus: 'paused', globalTestPausedAt: new Date() });
         return;
       }
-      const globalResult = await this.getTestResult(endpoint.globalTestId!, 2 * 60 * 60);
+      if (Date.now() - new Date(globalTest.edate!).getTime() < 5 * 60 * 1000) {
+        logger.info('The global test is updated less than 5 minutes ago. Skipping.');
+        return;
+      }
+      const globalResult = await this.getTestResult(endpoint.globalTestId!, 24 * 60 * 60);
       if (globalResult.length === 0) {
         logger.info('The global test is not finished yet.');
         return;
@@ -386,55 +563,68 @@ export default class Cron {
       if (bestAgent === undefined) {
         logger.warn('The global test is finished but all the agents are unhealthy. Pausing the test.');
         await this.pauseTest(endpoint.globalTestId!);
-        await endpoint.update({ globalTestStatus: 'paused', globalTestStatusUpdatedAt: new Date() });
+        await endpoint.update({ globalTestStatus: 'paused', globalTestPausedAt: new Date() });
         return;
       }
-      logger.info(`The best agent is ${bestAgent[0]} with latency ${bestAgent[1]} ms.`);
+      logger.info(`The best agent is ${bestAgent[0]} with latency ${bestAgent[1] / 1000} ms.`);
       logger.info('Pausing the global test.');
       await this.pauseTest(endpoint.globalTestId!);
+      await endpoint.update({ globalTestStatus: 'paused', globalTestPausedAt: new Date() });
       logger.info('Updating the local test.');
       const localTest = await this.getTest(endpoint.localTestId!);
       localTest.settings!.agentIds! = [bestAgent[0]];
-      await this.updateTest(localTest.id!, localTest);
+      await this.updateTest(endpoint.localTestId!, localTest);
       logger.info('Resuming the local test.');
       if (endpoint.localTestStatus === 'paused') {
         await this.resumeTest(endpoint.localTestId!);
-        await endpoint.update({ localTestStatus: 'running' });
+        await endpoint.update({ localTestStatus: 'running', localTestLastCheckedAt: new Date() });
       }
+      return;
     }
 
-    if (Date.now() - endpoint.globalTestPausedAt!.getTime() < 7 * 24 * 60 * 60 * 1000) {
-      logger.info('The global test is paused for less than 7 days. Skipping.');
+    if (Date.now() - endpoint.globalTestPausedAt!.getTime() < 14 * 24 * 60 * 60 * 1000) {
+      logger.debug('The global test is paused for less than 14 days. Skipping.');
+      return;
+    }
+    if (this.globalCreditReached) {
+      logger.info('The global credit is reached. Skipping.');
+      return;
     }
     const globalTest = await this.getTest(endpoint.globalTestId!);
     if (globalTest.status === V202202TestStatus.TEST_STATUS_ACTIVE && endpoint.globalTestStatus === 'paused') {
       logger.error('The global test is running but the endpoint says its paused. Pausing the test.');
       await this.pauseTest(endpoint.globalTestId!);
-      await endpoint.update({ globalTestStatus: 'paused', globalTestStatusUpdatedAt: new Date() });
+      await endpoint.update({ globalTestStatus: 'paused', globalTestPausedAt: new Date() });
       return;
     }
 
-    const globalResult = await this.getTestResult(endpoint.globalTestId!, 7 * 24 * 60 * 60);
-    if (globalResult.length === 0) {
-      const isLibp2pReachable = await this.checkLibp2pConnection(peerIdFromString(endpoint.peerId), multiaddr(endpoint.multiaddr));
-      if (!isLibp2pReachable) {
-        logger.warn('The libp2p connection is not reachable. Not resuming the global test.');
-        return;
-      }
-
-      logger.info('The global test is paused for more than 7 days. Libp2p check is okay. Resuming the global test.');
-      await this.resumeTest(endpoint.globalTestId!);
-      await endpoint.update({ globalTestStatus: 'running' });
+    const localTestResult = await this.getTestResult(endpoint.localTestId!, 24 * 60 * 60);
+    const bestLocalAgent = Cron.getBestAgent(localTestResult);
+    // Skip if latency is less than 10ms
+    if (bestLocalAgent !== undefined && bestLocalAgent[1] < 10 * 1000 * 1000) {
+      await endpoint.update({ globalTestStatus: 'paused', globalTestPausedAt: new Date() });
+      logger.debug('The local test is healthy. Not going to turn on the global test at this time.');
+      return;
     }
+
+    const isLibp2pReachable = await this.checkLibp2pConnection(peerIdFromString(endpoint.peerId), multiaddr(endpoint.multiaddr));
+    if (!isLibp2pReachable) {
+      logger.debug('The libp2p connection is not reachable. Not resuming the global test.');
+      return;
+    }
+
+    logger.info('The global test is paused for more than 7 days. Libp2p check is okay. Resuming the global test.');
+    await this.resumeTest(endpoint.globalTestId!);
+    await endpoint.update({ globalTestStatus: 'running' });
   }
 
   public async updateLocalTest (endpoint: Endpoint) : Promise<void> {
-    const logger = rootLogger.child(endpoint);
-    if (endpoint.localTestLastChecked != null && Date.now() - endpoint.localTestLastChecked.getTime() < 7 * 24 * 60 * 60 * 1000) {
-      logger.info('The local test is checked for less than 7 days. Skipping.');
+    const logger = rootLogger.child(endpoint.toSimple());
+    if (endpoint.localTestLastCheckedAt != null && Date.now() - endpoint.localTestLastCheckedAt.getTime() < 7 * 24 * 60 * 60 * 1000) {
+      logger.debug('The local test is checked for less than 7 days. Skipping.');
       return;
     }
-    await endpoint.update({ localTestLastChecked: new Date() });
+    await endpoint.update({ localTestLastCheckedAt: new Date() });
     const localTest = await this.getTest(endpoint.localTestId!);
     if (localTest.status === V202202TestStatus.TEST_STATUS_ACTIVE && endpoint.localTestStatus === 'paused') {
       logger.error('The local test is active but the endpoint is paused. Mark it as running.');
@@ -468,7 +658,7 @@ export default class Cron {
     rootLogger.info('Updating all tests in the database.');
     const endpoints = await Endpoint.findAll();
     for (const endpoint of endpoints) {
-      const logger = rootLogger.child(endpoint);
+      const logger = rootLogger.child(endpoint.toSimple());
       // If the endpoint is no longer in the currentEndpoints, we should remove the test and update in the database
       if (currentEndpoints.find(e =>
         e.provider === endpoint.provider &&
@@ -482,8 +672,18 @@ export default class Cron {
         continue;
       }
 
-      await this.updateGlobalTest(endpoint);
-      await this.updateLocalTest(endpoint);
+      try {
+        await this.updateGlobalTest(endpoint);
+      } catch (e) {
+        logger.error('Error updating the global test.', e);
+        throw e;
+      }
+      try {
+        await this.updateLocalTest(endpoint);
+      } catch (e) {
+        logger.error('Error updating the local test.', e);
+        throw e;
+      }
     }
   }
 }
