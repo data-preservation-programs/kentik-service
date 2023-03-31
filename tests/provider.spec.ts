@@ -26,7 +26,7 @@ xdescribe('provider', () => {
         const providers = await ProviderUtil.GetAllProviders('http://192.168.66.40:1234/rpc/v0', undefined);
         console.log(providers.length);
     })
-    fit('should get provider info with specific miners', async () => {
+    it('should get provider info with specific miners', async () => {
       const providers = await ProviderUtil.GetAllProviders('http://192.168.66.40:1234/rpc/v0', undefined, {
         allowList: ['f01832393'], hasMultiAddr: true, hasPower: true
       });

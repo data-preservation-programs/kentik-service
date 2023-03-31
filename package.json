@@ -8,7 +8,8 @@
     "start": "node dist/src/cmd/pull-providers.js",
     "coverage": "c8 jasmine --config=./tests/jasmine.json",
     "lint": "eslint --ext ts --fix src/",
-    "lint:nofix": "eslint --ext ts src/"
+    "lint:nofix": "eslint --ext ts src/",
+    "zip": "cd dist && cp ../package* . && npm install --production && zip -r ../function.zip ."
   },
   "type": "module",
   "repository": {
@@ -27,6 +28,7 @@
   "homepage": "https://github.com/data-preservation-program/kentik-service",
   "devDependencies": {
     "@istanbuljs/nyc-config-typescript": "^1.0.2",
+    "@types/aws-lambda": "^8.10.114",
     "@types/jasmine": "^4.3.1",
     "@types/node": "^18.15.3",
     "@typescript-eslint/eslint-plugin": "^5.55.0",
@@ -40,6 +42,7 @@
     "eslint-plugin-promise": "^6.1.1",
     "eslint-plugin-standard": "^5.0.0",
     "jasmine": "^4.6.0",
+    "mongodb-memory-server": "^8.12.1",
     "nyc": "^15.1.0",
     "openapi-typescript": "^6.2.0",
     "openapi-typescript-codegen": "^0.23.0",
@@ -70,6 +73,7 @@
     "it-pipe": "^2.0.5",
     "jasmine-spec-reporter": "^7.0.0",
     "libp2p": "^0.42.2",
+    "mongoose": "^7.0.3",
     "pg": "^8.10.0",
     "pino": "^8.11.0",
     "sequelize": "^6.29.3",

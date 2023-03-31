@@ -24,7 +24,7 @@ interface EndpointKey {
 
 export default class Cron {
   public globalCreditReached = false;
-  private kentik: Api<any>;
+  public kentik: Api<any>;
   private kentikV6Agents: string[] = [
     '66539',
     '608',
@@ -276,6 +276,17 @@ export default class Cron {
     return response.data.results!;
   }
 
+  public async getTestResultFrom (id: string, from: Date) : Promise<V202202TestResults[]> {
+    const endTime = new Date();
+    const response = await this.kentik.synthetics.getResultsForTests({
+      ids: [id],
+      startTime: from.toISOString(),
+      endTime: endTime.toISOString(),
+      aggregate: false
+    });
+    return response.data.results!;
+  }
+
   public async updateTest (id: string, test: V202202Test) {
     await this.kentik.synthetics.updateTest(id, { test });
   }
@@ -400,7 +411,7 @@ export default class Cron {
         }
 
         if (!Cron.ValidateHost(type, tuples[0][1]!)) {
-          logger.warn(`Skipping ${addr.toString()} because it is not a valid ${type} address.`);
+          logger.debug(`Skipping ${addr.toString()} because it is not a valid ${type} address.`);
           continue;
         }
 
@@ -576,8 +587,17 @@ export default class Cron {
       await this.updateTest(endpoint.localTestId!, localTest);
       logger.info('Resuming the local test.');
       if (endpoint.localTestStatus === 'paused') {
-        await this.resumeTest(endpoint.localTestId!);
         await endpoint.update({ localTestStatus: 'running', localTestLastCheckedAt: new Date() });
+        try {
+          await new Promise(resolve => setTimeout(resolve, 1000 * 30));
+          await this.resumeTest(endpoint.localTestId!);
+        } catch (e) {
+          logger.error(e, 'Error while resuming the local test.');
+          if (e instanceof AxiosError && e.response?.data?.code === 13) {
+            logger.info('The credit for resuming test credit is reached. Skipping.');
+            this.globalCreditReached = true;
+          }
+        }
       }
       return;
     }
