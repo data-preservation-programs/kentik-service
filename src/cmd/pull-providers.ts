@@ -72,20 +72,7 @@ async function updateDb (testId: string, type: 'global' | 'local', endpoint: End
 }
 
 while (true) {
-  logger.info('Uploading all results to reputation dao database');
-
-  for (const endpoint of await Endpoint.findAll()) {
-    const l = logger.child({ provider: endpoint.provider, globalTestId: endpoint.globalTestId, localTestId: endpoint.localTestId });
-    l.info('Working on endpoint');
-    try {
-      await updateDb(endpoint.globalTestId, 'global', endpoint);
-      await updateDb(endpoint.localTestId, 'local', endpoint);
-    } catch (e) {
-      l.error(e, 'Failed to update endpoint');
-      throw e;
-    }
-  }
-
+  cron.globalCreditReached = false;
   logger.info('Scanning for new providers');
   const providers = await ProviderUtil.GetAllProviders(
     process.env.LOTUS_URL, process.env.LOTUS_TOKEN,
@@ -106,6 +93,23 @@ while (true) {
     logger.info('Global credit reached. There are more providers to be added in the next loop.');
   }
 
-  logger.info('Waiting for 4 hours before next loop');
-  await new Promise(resolve => setTimeout(resolve, 4 * 3600 * 1000));
+  if (cron.globalCreditReached) {
+    logger.info('Waiting for 10 minutes before next loop');
+    await new Promise(resolve => setTimeout(resolve, 600 * 1000));
+  } else {
+    logger.info('Uploading all results to reputation dao database');
+    for (const endpoint of await Endpoint.findAll()) {
+      const l = logger.child({ provider: endpoint.provider, globalTestId: endpoint.globalTestId, localTestId: endpoint.localTestId });
+      l.info('Working on endpoint');
+      try {
+        await updateDb(endpoint.globalTestId, 'global', endpoint);
+        await updateDb(endpoint.localTestId, 'local', endpoint);
+      } catch (e) {
+        l.error(e, 'Failed to update endpoint');
+        throw e;
+      }
+    }
+    logger.info('Waiting for an hour before next loop');
+    await new Promise(resolve => setTimeout(resolve, 60 * 60 * 1000));
+  }
 }
