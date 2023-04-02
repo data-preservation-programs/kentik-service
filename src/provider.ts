@@ -14,6 +14,8 @@ import itconcat from 'it-concat';
 import { IdentifyService } from 'libp2p/dist/src/identify/index.js';
 import rootLogger from './logger.js';
 
+import asyncRetry from 'async-retry';
+
 export interface ProviderInfo {
   providerId: string;
   peerId: PeerId;
@@ -47,7 +49,7 @@ export class ProviderUtil {
     const nodejsProvider = new NodejsProvider(url, { token });
     const lotusClient = new LotusRPC(nodejsProvider, { schema: mainnet.fullNode });
     rootLogger.info('Calling stateMarketParticipants');
-    let providerIds = Object.keys(await lotusClient.stateMarketParticipants([]));
+    let providerIds = Object.keys(await asyncRetry(async () => lotusClient.stateMarketParticipants([]), { retries: 5 }));
     rootLogger.info(`Retrieved ${providerIds.length} providers`);
     const result : ProviderInfo[] = [];
     if (opts.allowList) {
@@ -62,7 +64,7 @@ export class ProviderUtil {
       logger.debug('Calling stateMinerInfo');
       let providerInfo;
       try {
-        providerInfo = await lotusClient.stateMinerInfo(providerId, []);
+        providerInfo = await asyncRetry(async () => lotusClient.stateMinerInfo(providerId, []), { retries: 5 });
       } catch (e: any) {
         if (e.message?.includes('actor code is not miner') === true) {
           logger.debug('Skipping because provider is not a miner');
@@ -75,7 +77,7 @@ export class ProviderUtil {
         continue;
       }
       if (opts.hasPower !== false) {
-        const powerInfo = await lotusClient.stateMinerPower(providerId, []);
+        const powerInfo = await asyncRetry(async () => lotusClient.stateMinerPower(providerId, []), { retries: 5 });
         if (powerInfo.MinerPower.RawBytePower === '0') {
           logger.debug({ powerInfo }, 'Skipping because provider does not have power');
           continue;
