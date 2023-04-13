@@ -1,4 +1,4 @@
-import { LotusRPC } from '@filecoin-shipyard/lotus-client-rpc';
+import {LotusRPC, MinerInfo} from '@filecoin-shipyard/lotus-client-rpc';
 // @ts-ignore
 import { NodejsProvider } from '@filecoin-shipyard/lotus-client-provider-nodejs';
 // @ts-ignore
@@ -62,9 +62,20 @@ export class ProviderUtil {
         break;
       }
       logger.debug('Calling stateMinerInfo');
-      let providerInfo;
+      let providerInfo: MinerInfo;
       try {
-        providerInfo = await asyncRetry(async () => lotusClient.stateMinerInfo(providerId, []), { retries: 5 });
+        providerInfo = (await asyncRetry(async (bail) => {
+          try {
+            return await lotusClient.stateMinerInfo(providerId, [])
+          } catch (e: any) {
+            if (e.message?.includes('actor code is not miner') === true) {
+              bail(e);
+              return undefined
+            } else {
+              throw e;
+            }
+          }
+        }, { retries: 5 }))!;
       } catch (e: any) {
         if (e.message?.includes('actor code is not miner') === true) {
           logger.debug('Skipping because provider is not a miner');

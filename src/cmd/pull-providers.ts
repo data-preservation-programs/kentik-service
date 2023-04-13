@@ -72,31 +72,7 @@ async function updateDb (testId: string, type: 'global' | 'local', endpoint: End
 }
 
 while (true) {
-  cron.globalCreditReached = false;
-  logger.info('Scanning for new providers');
-  const providers = await ProviderUtil.GetAllProviders(
-    process.env.LOTUS_URL, process.env.LOTUS_TOKEN,
-    {
-      hasPower: true,
-      hasMultiAddr: true
-    });
-  const endpointKeys = await cron.ScanNewProviders(providers);
-
-  logger.info('Waiting for 20 minutes so global test can finish');
-  await new Promise(resolve => setTimeout(resolve, 20 * 60 * 1000));
-
-  logger.info('Updating global and local test status (this may take a while)');
-  await cron.UpdateAllTests(endpointKeys);
-  logger.info('All done!');
-
-  if (cron.globalCreditReached) {
-    logger.info('Global credit reached. There are more providers to be added in the next loop.');
-  }
-
-  if (cron.globalCreditReached) {
-    logger.info('Waiting for 10 minutes before next loop');
-    await new Promise(resolve => setTimeout(resolve, 600 * 1000));
-  } else {
+  try {
     logger.info('Uploading all results to reputation dao database');
     for (const endpoint of await Endpoint.findAll()) {
       const l = logger.child({ provider: endpoint.provider, globalTestId: endpoint.globalTestId, localTestId: endpoint.localTestId });
@@ -106,9 +82,30 @@ while (true) {
         await updateDb(endpoint.localTestId, 'local', endpoint);
       } catch (e) {
         l.error(e, 'Failed to update endpoint');
-        throw e;
       }
     }
+
+    cron.globalCreditReached = false;
+    logger.info('Scanning for new providers');
+    const providers = await ProviderUtil.GetAllProviders(
+      process.env.LOTUS_URL, process.env.LOTUS_TOKEN,
+      {
+        hasPower: true,
+        hasMultiAddr: true
+      });
+    const endpointKeys = await cron.ScanNewProviders(providers);
+
+    logger.info('Waiting for 20 minutes so global test can finish');
+    await new Promise(resolve => setTimeout(resolve, 20 * 60 * 1000));
+
+    logger.info('Updating global and local test status (this may take a while)');
+    await cron.UpdateAllTests(endpointKeys);
+    logger.info('All done!');
+
+    logger.info('Waiting for an hour before next loop');
+    await new Promise(resolve => setTimeout(resolve, 60 * 60 * 1000));
+  } catch (e) {
+    logger.error(e)
     logger.info('Waiting for an hour before next loop');
     await new Promise(resolve => setTimeout(resolve, 60 * 60 * 1000));
   }
