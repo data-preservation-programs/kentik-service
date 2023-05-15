@@ -4,15 +4,72 @@ import Cron from '../cron.js';
 import Database, { Endpoint } from '../database.js';
 import logger from '../logger.js';
 import mongoose from 'mongoose';
-import Result, { KentikResult } from '../result.js';
+import Result, {KentikResult, RepDaoResult} from '../result.js';
 dotenv.config();
 
 await Database.init();
 const connection = await mongoose.createConnection(process.env.REPUTATION_MONGO_URI!, { dbName: 'kentik', autoIndex: true });
+const repdao = await mongoose.createConnection(process.env.REPDAO_MONGO_URI!, { dbName: 'reputation', autoIndex: true });
 Result.init(connection);
+Result.initRepDao(repdao);
 const cron = new Cron();
 await cron.init();
 const agents = new Map((await cron.kentik.synthetics.listAgents()).data.agents!.map(agent => [agent.id!, agent]));
+
+function getBeginningOfDay(date: Date): Date {
+  let newDate = new Date(date);
+  newDate.setHours(0, 0, 0, 0);
+  return newDate;
+}
+
+async function updateRepDao (testId: string, endpoint: Endpoint) {
+  const lastResult = await Result.repdao!.findOne({ testId }, { date: 1 }, { sort: { date: -1 } });
+  const dateOfLastResult = lastResult ? getBeginningOfDay(lastResult.date) : new Date(0);
+  const yesterday = getBeginningOfDay(new Date());
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (dateOfLastResult >= yesterday) return;
+  const startDate = yesterday;
+  const endDate = getBeginningOfDay(new Date());
+  const results = await cron.getTestResultFrom(testId, startDate, endDate);
+  for (const result of results) {
+    if (result.agents == null) continue;
+    for (const agentResult of result.agents) {
+      if (agentResult.tasks == null) continue;
+      for (const taskResult of agentResult.tasks) {
+        if (taskResult?.ping?.latency?.current == null || taskResult.ping?.jitter?.current == null || taskResult.ping?.packetLoss?.current == null) continue;
+        const agent = agents.get(agentResult.agentId!);
+        const newResult: RepDaoResult = {
+          testId: result.testId!,
+          agentLatitude: agent?.lat,
+          agentLongitude: agent?.long,
+          agentCity: agent?.city,
+          agentRegion: agent?.region,
+          agentCountry: agent?.country,
+          latencyMs: taskResult.ping.latency.current! / 1000,
+          provider: endpoint.provider,
+          multiaddr: endpoint.multiaddr,
+          date: yesterday,
+        };
+        logger.info({
+          testId: newResult.testId,
+          provider: newResult.provider,
+          date: yesterday,
+        }, 'Inserting result');
+        await Result.repdao!.updateOne({
+          testId: result.testId!,
+          provider: endpoint.provider,
+          multiaddr: endpoint.multiaddr,
+          date: yesterday,
+        }, {
+          $setOnInsert: newResult
+        }, {
+          upsert: true
+        });
+        return;
+      }
+    }
+  }
+}
 
 async function updateDb (testId: string, type: 'global' | 'local', endpoint: Endpoint) {
   const lastResult = await Result.model!.findOne({ testId }, { timestamp: 1 }, { sort: { timestamp: -1 } });
@@ -73,7 +130,19 @@ async function updateDb (testId: string, type: 'global' | 'local', endpoint: End
 
 while (true) {
   try {
-    logger.info('Uploading all results to reputation dao database');
+    logger.info('Uploading all results to reputation wg database');
+    for (const endpoint of await Endpoint.findAll()) {
+      const l = logger.child({ provider: endpoint.provider, globalTestId: endpoint.globalTestId, localTestId: endpoint.localTestId });
+      l.info('Working on endpoint');
+      try {
+        await updateRepDao(endpoint.localTestId, endpoint);
+      } catch (e) {
+        l.error(e, 'Failed to update endpoint');
+      }
+    }
+    break;
+
+    logger.info('Uploading all results to kentik database');
     for (const endpoint of await Endpoint.findAll()) {
       const l = logger.child({ provider: endpoint.provider, globalTestId: endpoint.globalTestId, localTestId: endpoint.localTestId });
       l.info('Working on endpoint');
@@ -84,6 +153,7 @@ while (true) {
         l.error(e, 'Failed to update endpoint');
       }
     }
+
 
     cron.globalCreditReached = false;
     logger.info('Scanning for new providers');

@@ -19,6 +19,19 @@ export interface KentikResult {
   timestamp: Date,
 }
 
+export interface RepDaoResult {
+  testId: string,
+  provider: string,
+  multiaddr: string,
+  date: Date,
+  agentLatitude: number | undefined,
+  agentLongitude: number | undefined,
+  agentCity: string | undefined,
+  agentRegion: string | undefined,
+  agentCountry: string | undefined,
+  latencyMs: number,
+}
+
 export function Simplify (result: KentikResult) {
   return {
     type: result.type,
@@ -43,6 +56,31 @@ export function Simplify (result: KentikResult) {
 export default class Result {
   // eslint-disable-next-line @typescript-eslint/ban-types
   public static model : mongoose.Model<KentikResult, {}, {}, {}> | null = null;
+
+  public static repdao : mongoose.Model<RepDaoResult, {}, {}, {}> | null = null;
+
+  public static initRepDao (connection: mongoose.Connection) {
+    if (Result.repdao != null) return;
+    const schema = new Schema<RepDaoResult>({
+      testId: Schema.Types.String,
+      provider: Schema.Types.String,
+      multiaddr: Schema.Types.String,
+      date: Schema.Types.Date,
+      agentLatitude: Schema.Types.Number,
+      agentLongitude: Schema.Types.Number,
+      agentCity: Schema.Types.String,
+      agentRegion: Schema.Types.String,
+      agentCountry: Schema.Types.String,
+      latencyMs: Schema.Types.Number,
+    })
+    schema.index({
+      testId: 1,
+      date: -1,
+    });
+
+    Result.repdao = connection.model<RepDaoResult>('kentik', schema);
+  }
+
   public static init (connection: mongoose.Connection) {
     if (Result.model != null) return;
     const schema = new Schema<KentikResult>({

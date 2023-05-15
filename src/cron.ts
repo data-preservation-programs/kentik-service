@@ -276,8 +276,8 @@ export default class Cron {
     return response.data.results!;
   }
 
-  public async getTestResultFrom (id: string, from: Date) : Promise<V202202TestResults[]> {
-    const endTime = new Date();
+  public async getTestResultFrom (id: string, from: Date, end?: Date) : Promise<V202202TestResults[]> {
+    const endTime = end ? end : new Date();
     const response = await this.kentik.synthetics.getResultsForTests({
       ids: [id],
       startTime: from.toISOString(),
