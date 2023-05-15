@@ -140,7 +140,6 @@ while (true) {
         l.error(e, 'Failed to update endpoint');
       }
     }
-    break;
 
     logger.info('Uploading all results to kentik database');
     for (const endpoint of await Endpoint.findAll()) {
